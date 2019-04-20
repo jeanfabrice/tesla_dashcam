@@ -6,7 +6,7 @@ ARG VERSION=v0.1.9b0
 ARG DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /usr/src/app/tesla_dashcam
-RUN git clone https://github.com/ehendrix23/tesla_dashcam.git . && \
+RUN git clone https://github.com/jeanfabrice/tesla_dashcam.git . && \
     git checkout ${VERSION} && \
     pip install -r requirements.txt
 
