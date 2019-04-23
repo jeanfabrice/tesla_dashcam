@@ -935,7 +935,6 @@ def main() -> None:
         epilog=epilog,
         formatter_class=SmartFormatter)
 
-
     parser.add_argument('--version', action='version', version=' %(prog)s '
                         + VERSION_STR)
     parser.add_argument('source',
@@ -1265,7 +1264,6 @@ def main() -> None:
                                          'when checking for updates.'
                                     )
 
-
     args = parser.parse_args()
 
     if not args.no_check_for_updates or args.check_for_updates:
@@ -1469,7 +1467,7 @@ def main() -> None:
         if use_gpu:
             print("GPU acceleration is enabled")
             encoding = encoding + '_mac' if sys.platform == 'darwin' else \
-                encoding + '_nvenc'
+                encoding + '_nvidia'
 
             ffmpeg_params = ffmpeg_params + \
                             ['-b:v',
