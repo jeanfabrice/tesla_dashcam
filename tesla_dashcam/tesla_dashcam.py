@@ -17,7 +17,24 @@ import requests
 from psutil import disk_partitions
 from tzlocal import get_localzone
 
-VERSION = '0.1.9b0'
+VERSION = {
+    'major': 0,
+    'minor': 1,
+    'patch': 9,
+    'beta': 1,
+}
+VERSION_STR = 'v{major}.{minor}.{patch}'.format(
+        major=VERSION['major'],
+        minor=VERSION['minor'],
+        patch=VERSION['patch'],
+    )
+
+if VERSION['beta'] > -1:
+    VERSION_STR = VERSION_STR + 'b{beta}'.format(
+        beta=VERSION['beta']
+    )
+
+MONITOR_SLEEP_TIME = 5
 
 GITHUB = {
     'URL': 'https://api.github.com',
@@ -204,13 +221,9 @@ def get_tesladashcam_folder():
 
         teslacamfolder = os.path.join(partition.mountpoint, 'TeslaCam')
         if os.path.isdir(teslacamfolder):
-            # TeslaCam Folder found, returning it.
-            print("TeslaCam folder found on {partition}.".format(
-                partition=partition.mountpoint
-            ))
-            return teslacamfolder
+            return teslacamfolder, partition.mountpoint
 
-    return None
+    return None, None
 
 
 def get_movie_files(source_folder, exclude_subdirs, ffmpeg):
@@ -398,6 +411,7 @@ def create_intermediate_movie(filename_timestamp,
     video files into 1 video file. """
     # We first stack (combine the 3 different camera video files into 1
     # and then we concatenate.
+    camera_1 = None
     if video['video_info']['front_camera']['filename'] is not None:
         camera_1 = os.path.join(
             video['movie_folder'],
@@ -530,7 +544,7 @@ def create_intermediate_movie(filename_timestamp,
                      video_settings['other_params']
 
     ffmpeg_command = ffmpeg_command + ['-y', temp_movie_name]
-    # print(ffmpeg_command)
+
     # Run the command.
     try:
         run(ffmpeg_command, capture_output=True, check=True)
@@ -762,6 +776,9 @@ def process_folders(folders, video_settings, skip_existing, delete_source):
 
             # Delete the source files if stated to delete.
             if delete_folder_files:
+                print("\t\tDeleting files and folder {folder_name}".format(
+                    folder_name=folder_name
+                ))
                 delete_intermediate(delete_file_list)
                 # And delete the folder.
                 delete_intermediate([folder_name])
@@ -777,7 +794,8 @@ def process_folders(folders, video_settings, skip_existing, delete_source):
     # Reason to also do it with 1 is to put the name correctly for the
     # movie
     # especially if a filename was given.
-    if video_settings['merge_subdirs'] or len(dashcam_clips) == 1:
+    movie_name is None
+    if video_settings['merge_subdirs'] or len(folders) == 1:
         print("\tCreating movie {}, please be patient.".format(
             video_settings['movie_filename']))
 
@@ -787,9 +805,9 @@ def process_folders(folders, video_settings, skip_existing, delete_source):
             video_settings,
         )
 
-        if movie_name is not None:
-            print("Movie {base_name} has been created, enjoy.".format(
-                base_name=movie_name))
+    if movie_name is not None:
+        print("Movie {base_name} has been created, enjoy.".format(
+            base_name=movie_name))
     else:
         print("All folders have been processed, resulting movie files are "
               "located in {target_folder}".format(
@@ -802,33 +820,124 @@ def process_folders(folders, video_settings, skip_existing, delete_source):
     print("Total processing time: {real}".format(
         real=str(timedelta(seconds=real)),
     ))
-
+    if video_settings['notification']:
+        if movie_name is not None:
+            notify("TeslaCam", "Completed",
+                   "{total_folders} folder{folders} with {total_clips} "
+                   "clip{clips} have been processed, movie {movie_name} has "
+                   "been created.".format(
+                       folders='' if len(folders) < 2 else 's',
+                       total_folders=len(folders),
+                       clips='' if total_clips < 2 else 's',
+                       total_clips=total_clips,
+                       movie_name=video_settings['target_folder']
+                   ))
+        else:
+            notify("TeslaCam", "Completed",
+                   "{total_folders} folder{folders} with {total_clips} "
+                   "clip{clips} have been processed, {target_folder} contains "
+                   "resulting files.".format(
+                       folders='' if len(folders) < 2 else 's',
+                       total_folders=len(folders),
+                       clips='' if total_clips < 2 else 's',
+                       total_clips=total_clips,
+                       target_folder=video_settings['target_folder']
+                   ))
     print()
+
+def resource_path(relative_path):
+    """ Return absolute path for provided relative item based on location
+
+    of program.
+    """
+    # If compiled with pyinstaller then sys._MEIPASS points to the location
+    # of the bundle. Otherwise path of python script is used.
+    base_path = getattr(sys, '_MEIPASS', Path(__file__).parent)
+    return os.path.join(base_path, relative_path)
+
+def notify_macos(title, subtitle, message):
+    """ Notification on MacOS """
+    try:
+        run(['osascript',
+             '-e display notification "{message}" with title "{title}" '
+             'subtitle "{subtitle}"'
+             ''.format(
+                 message=message,
+                 title=title,
+                 subtitle=subtitle,
+             )])
+    except Exception as exc:
+        print("Failed in notifification: ", exc)
+
+def notify_windows(title, subtitle, message):
+    """ Notification on Windows """
+    try:
+        from win10toast import ToastNotifier
+        ToastNotifier().show_toast(
+            threaded=True,
+            title="{} {}".format(title, subtitle),
+            msg=message,
+            duration=5,
+            icon_path=resource_path("tesla_dashcam.ico")
+        )
+
+        run(['notify-send',
+             '"{title} {subtitle}"'.format(
+                 title=title,
+                 subtitle=subtitle),
+             '"{}"'.format(message),
+             ])
+    except Exception as exc:
+        pass
+        # print("Failed in notifification: ", exc)
+
+def notify_linux(title, subtitle, message):
+    """ Notification on Linux """
+    try:
+        run(['notify-send',
+             '"{title} {subtitle}"'.format(
+                 title=title,
+                 subtitle=subtitle),
+             '"{}"'.format(message),
+             ])
+    except Exception as exc:
+        print("Failed in notifification: ", exc)
+
+def notify(title, subtitle, message):
+    """ Call function to send notification based on OS """
+    if sys.platform == 'darwin':
+        notify_macos(title, subtitle, message)
+    elif sys.platform == 'win32':
+        notify_windows(title, subtitle, message)
+    elif sys.platform == 'linux':
+        notify_linux(title, subtitle, message)
 
 def main() -> None:
     """ Main function """
-    # If compiled then getting path of executable is different.
-    if getattr(sys, 'frozen', False):
-        ffmpeg_path = os.path.dirname(sys.executable)
-    else:
-        ffmpeg_path = Path(__file__).parent
 
-    ffmpeg_default = os.path.join(ffmpeg_path, FFMPEG.get(sys.platform,
-                                                          'ffmpeg'))
+    internal_ffmpeg = getattr(sys, 'frozen', None) is not None
+    ffmpeg_default = resource_path(FFMPEG.get(sys.platform, 'ffmpeg'))
 
     # Check if ffmpeg exist, if not then hope it is in default path or
     # provided.
     if not os.path.isfile(ffmpeg_default):
+        internal_ffmpeg = False
         ffmpeg_default = FFMPEG.get(sys.platform, 'ffmpeg')
+
+    epilog = "This program leverages ffmpeg which is included. See " \
+             "https://ffmpeg.org/ for more information on ffmpeg" if \
+        internal_ffmpeg else 'This program requires ffmpeg which can be ' \
+                             'downloaded from: ' \
+                             'https://ffmpeg.org/download.html'
 
     parser = argparse.ArgumentParser(
         description='tesla_dashcam - Tesla DashCam & Sentry Video Creator',
-        epilog='This program requires ffmpeg which can be downloaded from: '
-               'https://ffmpeg.org/download.html',
+        epilog=epilog,
         formatter_class=SmartFormatter)
 
+
     parser.add_argument('--version', action='version', version=' %(prog)s '
-                        + VERSION)
+                        + VERSION_STR)
     parser.add_argument('source',
                         type=str,
                         help="Folder containing the saved camera files.")
@@ -864,6 +973,12 @@ def main() -> None:
                         action='store_true',
                         help='Do not remove the intermediate video files that '
                              'are created')
+
+    parser.add_argument('--no-notification',
+                        dest='system_notification',
+                        action='store_false',
+                        help='Do not create a notification upon '
+                             'completion.')
 
     parser.add_argument('--layout',
                         required=False,
@@ -1081,12 +1196,19 @@ def main() -> None:
                                     "much time is used to compress it."
                                )
 
-    parser.add_argument('--ffmpeg',
-                        required=False,
-                        type=str,
-                        default=ffmpeg_default,
-                        help='Path and filename for ffmpeg. Specify if '
-                             'ffmpeg is not within path.')
+    if internal_ffmpeg:
+        parser.add_argument('--ffmpeg',
+                            required=False,
+                            type=str,
+                            help='Full path and filename for alternative '
+                                 'ffmpeg.')
+    else:
+        parser.add_argument('--ffmpeg',
+                            required=False,
+                            type=str,
+                            default=ffmpeg_default,
+                            help='Path and filename for ffmpeg. Specify if '
+                                 'ffmpeg is not within path.')
 
     monitor_group = parser.add_argument_group(
         title="Monitor for TeslaDash Cam drive",
@@ -1148,19 +1270,65 @@ def main() -> None:
 
     if not args.no_check_for_updates or args.check_for_updates:
         release_info = check_latest_release(args.include_beta)
-        check_version = 'v' + VERSION
-        if release_info.get('tag_name') != check_version:
+
+        new_version = False
+        if release_info.get('tag_name') is not None:
+            github_version = release_info.get('tag_name').split('.')
+            if len(github_version) == 3:
+                # Release tags normally start with v. If that is the case
+                # then strip the v.
+                try:
+                    major_version = int(github_version[0])
+                except ValueError:
+                    major_version = int(github_version[0][1:])
+
+                minor_version = int(github_version[1])
+                if release_info.get('prerelease'):
+                    # Drafts will have b and then beta number.
+                    patch_version = int(github_version[2].split('b')[0])
+                    beta_version = int(github_version[2].split('b')[1])
+                else:
+                    patch_version = int(github_version[2])
+                    beta_version = -1
+
+                if major_version == VERSION['major']:
+                    if minor_version == VERSION['minor']:
+                        if patch_version == VERSION['patch']:
+                            if beta_version > VERSION['beta'] or \
+                                    beta_version == -1:
+                                new_version = True
+                        elif patch_version > VERSION['patch']:
+                            new_version = True
+                    elif minor_version > VERSION['minor']:
+                        new_version = True
+                elif major_version > VERSION['major']:
+                    new_version = True
+
+        if new_version:
             beta = ""
-            if release_info.get('draft'):
+            if release_info.get('prerelease'):
                 beta = "beta "
 
+            release_notes = ""
+            if not args.check_for_updates:
+                if args.system_notification:
+                    notify("TeslaCam", "Update available",
+                           "New {beta}release {release} is available. You are on "
+                           "version {version}".format(
+                               beta=beta,
+                               release=release_info.get('tag_name'),
+                               version=VERSION_STR,
+                           ))
+                release_notes = "Use --check-for-update to get latest " \
+                                "release notes."
+
             print("New {beta}release {release} is available for download "
-                  "({url}). You are currently on {version}. Use "
-                  "--check-for-update to get latest release notes.".format(
+                  "({url}). You are currently on {version}. {rel_note}".format(
                       beta=beta,
                       release=release_info.get('tag_name'),
                       url=release_info.get('html_url'),
-                      version=check_version,
+                      version=VERSION_STR,
+                      rel_note=release_notes,
                   ))
 
             if args.check_for_updates:
@@ -1174,11 +1342,13 @@ def main() -> None:
         else:
             if args.check_for_updates:
                 print("{version} is the latest release available.".format(
-                    version=check_version,
+                    version=VERSION_STR,
                 ))
                 return
 
-    ffmpeg = args.ffmpeg
+
+    ffmpeg = ffmpeg_default if getattr(args, 'ffmpeg', None) is None else \
+        args.ffmpeg
 
     mirror_sides = ''
     if args.rear:
@@ -1363,6 +1533,7 @@ def main() -> None:
         'merge_subdirs':     args.merge_subdirs,
         'movie_filename':    movie_filename,
         'keep_intermediate': args.keep_intermediate,
+        'notification':      args.system_notification,
         'swap_left_right':   swap_left_right,
         'movie_layout':      args.layout,
         'movie_speed':       speed,
@@ -1389,22 +1560,33 @@ def main() -> None:
               " stop")
         while True:
             try:
-                source_folder = get_tesladashcam_folder()
+                source_folder, source_partition = get_tesladashcam_folder()
                 if source_folder is None:
                     # Nothing found, sleep for 1 minute and check again.
                     if got_drive:
                         print("TeslaCam drive has been ejected.")
+                        print("Monitoring for TeslaCam Drive to be inserted. "
+                              "Press CTRL-C to stop")
 
-                    sleep(60)
+                    sleep(MONITOR_SLEEP_TIME)
                     got_drive = False
                     continue
 
                 # As long as TeslaCam drive is still attached we're going to
                 # keep on waiting.
                 if got_drive:
-                    sleep(60)
+                    sleep(MONITOR_SLEEP_TIME)
                     continue
 
+                # TeslaCam Folder found, returning it.
+                print("TeslaCam folder found on {partition}.".format(
+                    partition=source_partition
+                ))
+                if args.system_notification:
+                    notify("TeslaCam", "Started",
+                           "TeslaCam folder found on {partition}.".format(
+                               partition=source_partition
+                    ))
                 # Got a folder, append what was provided as source unless
                 # . was provided in which case everything is done.
                 if args.source != '.':
@@ -1425,20 +1607,24 @@ def main() -> None:
                     process_folders(folders, video_settings, True,
                                     args.delete_source)
 
+                if args.system_notification:
+                    notify("TeslaCam", "Completed",
+                           "Processing of movies has completed.".format(
+                               partition=source_partition
+                    ))
                 # Stop if we're only to monitor once and then exit.
                 if args.monitor_once:
                     print("Exiting monitoring as asked process once.")
                     break
 
                 got_drive = True
-                print("Back to monitoring for TeslaCam Drive to be inserted.")
+                print("Waiting for TeslaCam Drive to be ejected. Press "
+                      "CTRL-C to stop")
             except KeyboardInterrupt:
                 print("Monitoring stopped due to CTRL-C.")
                 break
     else:
         folders = get_movie_files(args.source, args.exclude_subdirs, ffmpeg)
         process_folders(folders, video_settings, False, False)
-
-
 
 sys.exit(main())
