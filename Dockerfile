@@ -1,12 +1,13 @@
-FROM python:3
-
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y ffmpeg && apt-get autoremove && apt-get clean
-
+FROM python:3-alpine
 
 WORKDIR /usr/src/app/tesla_dashcam
 ADD . .
-RUN pip install -r requirements.txt
+
+RUN apk add -U ffmpeg gcc musl-dev linux-headers \
+    && pip install -r requirements.txt \
+    && apk del gcc musl-dev linux-headers \
+    && rm -rf /var/cache/apk/*apk
+ 
 ENV PYTHONUNBUFFERED=true
 
 ENTRYPOINT [ "python", "tesla_dashcam/tesla_dashcam.py" ]
