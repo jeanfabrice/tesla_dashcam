@@ -21,7 +21,7 @@ VERSION = {
     'major': 0,
     'minor': 1,
     'patch': 9,
-    'beta': 2,
+    'beta': -1,
 }
 VERSION_STR = 'v{major}.{minor}.{patch}'.format(
     major=VERSION['major'],
@@ -130,10 +130,10 @@ MOVIE_LAYOUT = {
 }
 
 MOVIE_QUALITY = {
-    'HIGH': '18',
+    'HIGH':   '18',
     'MEDIUM': '20',
-    'LOW': '23',
-    'LOWER': '28',
+    'LOW':    '23',
+    'LOWER':  '28',
     'LOWEST': '33',
 }
 
@@ -156,13 +156,13 @@ DEFAULT_FONT = {
 }
 
 HALIGN = {
-    'LEFT': '10',
+    'LEFT':   '10',
     'CENTER': '(w/2-text_w/2)',
-    'RIGHT': '(w-text_w)',
+    'RIGHT':  '(w-text_w)',
 }
 
 VALIGN = {
-    'TOP': '10',
+    'TOP':    '10',
     'MIDDLE': '(h/2-(text_h/2))',
     'BOTTOM': '(h-(text_h*2))',
 }
@@ -389,6 +389,10 @@ def get_metadata(ffmpeg, filenames):
                 int(duration_list[2].split('.')[0]) + \
                 (float(duration_list[2].split('.')[1]) / 100)
 
+            # Only add if duration is greater then 0; otherwise ignore.
+            if duration <= 0:
+                continue
+
             metadata.append(
                 {
                     'filename': file,
@@ -428,6 +432,12 @@ def create_intermediate_movie(filename_timestamp,
         right_camera = os.path.join(
             video['movie_folder'],
             video['video_info']['right_camera']['filename'])
+
+    if camera_1 is None and left_camera is None and right_camera is None:
+        print("\t\tNo valid video files for {timestamp}".format(
+            timestamp=filename_timestamp,
+        ))
+        return None
 
     if video_settings['swap_left_right']:
         camera_2 = left_camera
@@ -613,16 +623,28 @@ def create_movie(clips_list, movie_filename, video_settings):
     # Go through the list of clips to create the command.
     ffmpeg_concat_input = []
     concat_filter_complex = ''
-    for clip_number, filename in enumerate(clips_list):
+    total_clips = 0
+    for filename in clips_list:
+        if not os.path.isfile(filename):
+            print("\t\tFile {} does not exist anymore, skipping.".format(
+                filename
+            ))
+            continue
+
         ffmpeg_concat_input = ffmpeg_concat_input + ['-i', filename]
         concat_filter_complex = concat_filter_complex + \
             '[{clip}:v:0] '.format(
-                clip=clip_number
+                clip=total_clips
             )
+        total_clips = total_clips + 1
+
+    if total_clips == 0:
+        print("\t\tError: No valid clips to merge found.")
+        return None
 
     concat_filter_complex = concat_filter_complex + \
         "concat=n={total_clips}:v=1:a=0 [v]".format(
-            total_clips=len(clips_list),
+            total_clips=total_clips,
         )
 
     ffmpeg_params = ['-filter_complex',
@@ -1646,5 +1668,6 @@ def main() -> None:
         folders = get_movie_files(args.source, args.exclude_subdirs, ffmpeg)
         process_folders(folders, video_settings, False, False)
 
+    print()
 
 sys.exit(main())
